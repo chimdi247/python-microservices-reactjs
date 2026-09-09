@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  main:
+    build:
+      context: ./main
+      dockerfile: Dockerfile
+    command: 'python main.py'
+    ports:
+      - "8001:5000"
+    volumes:
+      - ./main:/app
+    depends_on:
+      db-main:
+        condition: service_healthy
+
+  queue-main:
+    build:
+      context: ./main
+      dockerfile: Dockerfile
+    command: 'python -u consumer.py'
+    depends_on:
+      db-main:
+        condition: service_healthy
+      main:
+        condition: service_started
+
+  db-main:
+    image: mysql:5.7.22
+    restart: always
+    environment:
+      MYSQL_DATABASE: main
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - dbdata_main:/var/lib/mysql
+    ports:
+      - "33067:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    command: >
+      sh -c "python manage.py makemigrations &&
+             python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./admin:/app
+    depends_on:
+      db-admin:
+        condition: service_healthy
+
+  queue-admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    command: 'python -u consumer.py'
+    depends_on:
+      db-admin:
+        condition: service_healthy
+      admin:
+        condition: service_started
+
+  db-admin:
+    image: mysql:5.7.22
+    restart: always
+    environment:
+      MYSQL_DATABASE: admin
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - dbdata_admin:/var/lib/mysql
+    ports:
+      - "33066:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  client:
+    build:
+      context: ./react-crud
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+
+volumes:
+  dbdata_main:
+  dbdata_admin:
