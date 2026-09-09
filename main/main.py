@@ -41,7 +41,7 @@ def index():
 
 @app.route('/api/products/<int:id>/like', methods=['POST'])
 def like(id):
-    req = requests.get('http://localhost:8000/api/user')
+    req = requests.get('http://34.170.196.139:8000/api/user')
     json = req.json()
 
     try:

@@ -9,7 +9,7 @@ const Products = () => {
     useEffect(() => {
         (
             async () => {
-                const response = await fetch('http://localhost:8000/api/products');
+                const response = await fetch('http://34.170.196.139:8000/api/products');
 
                 const data = await response.json();
 
@@ -20,7 +20,7 @@ const Products = () => {
 
     const del = async (id: number) => {
         if (window.confirm('Are you sure you want to delete this product?')) {
-            await fetch(`http://localhost:8000/api/products/${id}`, {
+            await fetch(`http://34.170.196.139:8000/api/products/${id}`, {
                 method: 'DELETE'
             });
 

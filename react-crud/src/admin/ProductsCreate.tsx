@@ -10,7 +10,7 @@ const ProductsCreate = () => {
     const submit = async (e: SyntheticEvent) => {
         e.preventDefault();
 
-        await fetch('http://localhost:8000/api/products', {
+        await fetch('http://34.170.196.139:8000/api/products', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
