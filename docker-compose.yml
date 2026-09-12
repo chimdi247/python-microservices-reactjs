@@ -1,0 +1,204 @@
+name: polyglot-commerce
+
+# -----------------------------------------------------------------------------
+# One-file deployment for the whole app: 2 MySQL databases, RabbitMQ, the
+# admin (Django) service, the main (Flask) service, their Kafka-style event
+# consumers, and the React frontend.
+#
+# Usage:
+#   docker compose up -d --build
+#
+# See README.docker.md for what was fixed to make this work as a single
+# compose file (it previously depended on a since-dead external IP and a
+# third party's CloudAMQP account).
+# -----------------------------------------------------------------------------
+
+services:
+
+  rabbitmq:
+    image: rabbitmq:4.0-management-alpine
+    container_name: rabbitmq
+    restart: unless-stopped
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - app-network
+
+  db-main:
+    image: mysql:8.4
+    container_name: db-main
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: main
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - dbdata_main:/var/lib/mysql
+    ports:
+      - "33067:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - app-network
+
+  db-admin:
+    image: mysql:8.4
+    container_name: db-admin
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: admin
+      MYSQL_USER: root
+      MYSQL_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - dbdata_admin:/var/lib/mysql
+    ports:
+      - "33066:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - app-network
+
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    container_name: admin
+    restart: unless-stopped
+    command: >
+      sh -c "python manage.py makemigrations &&
+             python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./admin:/app
+    depends_on:
+      db-admin:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/products')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - app-network
+
+  queue-admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    container_name: queue-admin
+    restart: unless-stopped
+    command: 'python -u consumer.py'
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+    volumes:
+      - ./admin:/app
+    depends_on:
+      db-admin:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      admin:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  main:
+    build:
+      context: ./main
+      dockerfile: Dockerfile
+    container_name: main
+    restart: unless-stopped
+    command: 'python main.py'
+    environment:
+      SQLALCHEMY_DATABASE_URI: mysql://root:root@db-main/main
+      ADMIN_SERVICE_URL: http://admin:8000
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+    ports:
+      - "8001:5000"
+    volumes:
+      - ./main:/app
+    depends_on:
+      db-main:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/products')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - app-network
+
+  queue-main:
+    build:
+      context: ./main
+      dockerfile: Dockerfile
+    container_name: queue-main
+    restart: unless-stopped
+    command: 'python -u consumer.py'
+    environment:
+      SQLALCHEMY_DATABASE_URI: mysql://root:root@db-main/main
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2F
+    volumes:
+      - ./main:/app
+    depends_on:
+      db-main:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      main:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  client:
+    build:
+      context: ./react-crud
+      dockerfile: Dockerfile
+      args:
+        # Baked into the JS bundle at build time — must be a URL the
+        # browser can reach (your host's IP/domain), not an internal
+        # Docker service name. See .env.example / README.docker.md.
+        REACT_APP_ADMIN_API_URL: ${REACT_APP_ADMIN_API_URL:-http://localhost:8000}
+        REACT_APP_MAIN_API_URL: ${REACT_APP_MAIN_API_URL:-http://localhost:8001}
+    container_name: client
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - admin
+      - main
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  dbdata_main:
+  dbdata_admin:
